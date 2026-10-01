@@ -379,12 +379,27 @@ OpenAI Key ：sk-xxxxxxxx
 扩展设置页 → 翻译服务选 `openai` → 填 Key。缺点是会同步到浏览器账号云端。
 
 **方式二：服务端本地文件**（推荐，不联网同步）
-复制模板再填：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\set-api-key.ps1
+```
+
+它会让你粘贴 Key（**输入时不回显**，也不会留在命令历史里），然后写进 `server/config.json`。
+想只看当前配置（打码显示）加 `-Show`：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\set-api-key.ps1 -Show
+```
+
+也可以手动复制模板再填：
 
 ```powershell
 copy server\config.example.json server\config.json
 notepad server\config.json
 ```
+
+要换 Key 时，去 [DeepSeek 控制台](https://platform.deepseek.com/api_keys)
+删掉旧的、建一个新的，再跑一遍上面的脚本即可。
 
 也可以完全不落文件，用环境变量：
 
