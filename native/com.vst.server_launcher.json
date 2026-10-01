@@ -1,0 +1,9 @@
+{
+    "name":  "com.vst.server_launcher",
+    "description":  "视频实时字幕翻译 - 本地服务启动器",
+    "path":  "D:\\DSH-Workspace\\video-subtitle-translator\\native\\ServerLauncher.exe",
+    "type":  "stdio",
+    "allowed_origins":  [
+                            "chrome-extension://cklgbajekihboflmllhodmndoemkgpmj/"
+                        ]
+}

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>视频实时字幕翻译 · 音频采集</title>
+  </head>
+  <body>
+    <!-- 这个页面永远不可见。它的唯一用途是：MV3 的 Service Worker 里没有
+         Web Audio / getUserMedia，所以音频采集必须放在一个隐藏的 offscreen 文档里。 -->
+    <script src="common.js"></script>
+    <script src="offscreen.js"></script>
+  </body>
+</html>

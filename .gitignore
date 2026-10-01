@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+#  ⚠ 这个文件里有你的 API Key，别提交、别分享、别上传网盘
+# ---------------------------------------------------------------------------
+server/config.json
+
+# 环境变量形式的密钥也一起挡掉
+.env
+*.key
+
+# 模型文件很大（几百 MB ~ 几 GB），没必要进版本库
+server/models/
+server/.hf/
+
+# 缓存
+server/.cache/
+.cache/
+__pycache__/
+*.pyc
+
+# 运行时产物
+server/timing.log
+server/server_debug.log
+*.log
+
+# 测试用的生成音频（可以用脚本重新生成，没必要进仓库）
+# 保留两个基准样本：sample_en.wav / sample_zh.wav
+server/tests/sample_quiet_*.wav
+server/tests/sample_weak_*.wav
+server/tests/sample_en_bgm.wav
+
+# 打包 / 临时
+*.zip
+*.7z
+dist/
+.DS_Store
+Thumbs.db

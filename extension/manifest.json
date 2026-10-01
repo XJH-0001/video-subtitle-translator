@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "视频实时字幕翻译",
+  "version": "1.0.0",
+  "description": "给任意网页视频加上实时字幕：本地识别 + 自动翻译 + 双语悬浮显示。音频只在你自己的电脑上处理。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "视频实时字幕翻译",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["common.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "toggle-capture": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "开始 / 停止实时字幕"
+    }
+  }
+}
