@@ -671,7 +671,7 @@
     dst.className = "vst-dst";
     el.appendChild(src);
     el.appendChild(dst);
-    return { el, src, dst, data: {}, shown: { src: "", dst: "" }, rafSrc: 0, rafDst: 0 };
+    return { el, src, dst, data: {}, shown: { src: "", dst: "" }, rafSrc: 0, rafDst: 0, srcFallback: 0 };
   }
 
   // -------------------------------------------------------------------------
@@ -743,6 +743,11 @@
     if (rec.rafDst) cancelAnimationFrame(rec.rafDst);
     rec.rafSrc = 0;
     rec.rafDst = 0;
+    // 顺带把「翻译失败兜底显示原文」的定时器也清掉
+    if (rec.srcFallback) {
+      clearTimeout(rec.srcFallback);
+      rec.srcFallback = 0;
+    }
   }
 
 
@@ -794,6 +799,26 @@
     // 只开原文或只开译文时，别留一个空的占位
     rec.el.style.display = showSrc || showDst ? "" : "none";
 
+    // ★ 只显示译文时的兜底：万一翻译失败（接口全挂、余额用完），
+    //   字幕会一片空白 —— 那比显示原文糟糕得多。
+    //   所以定稿后几秒还没等到译文，就先把原文亮出来，至少让用户看到内容。
+    if (rec.srcFallback) {
+      clearTimeout(rec.srcFallback);
+      rec.srcFallback = 0;
+    }
+    if (!settings.showSource && settings.showTarget && d.final && d.source && !d.translated) {
+      const wantSrc = d.source;
+      rec.srcFallback = setTimeout(() => {
+        rec.srcFallback = 0;
+        // 期间译文到了就别再插原文了
+        if (rec.data && !rec.data.translated && rec.data.source === wantSrc) {
+          rec.src.style.display = "";
+          rec.el.style.display = "";
+          refreshBoxState();
+        }
+      }, 4000);
+    }
+
     hidePlaceholderIfRealLines();
     trim();
     refreshBoxState();
@@ -808,6 +833,7 @@
       const rec = nodes.get(firstKey);
       if (rec) {
         clearLineAnimations(rec);
+        if (rec.srcFallback) { clearTimeout(rec.srcFallback); rec.srcFallback = 0; }
         if (rec.el.parentNode) rec.el.parentNode.removeChild(rec.el);
       }
       nodes.delete(firstKey);

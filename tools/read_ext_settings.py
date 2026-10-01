@@ -94,6 +94,8 @@ def main() -> int:
             keys = [
                 "translator", "openaiModel", "openaiBaseUrl", "model",
                 "targetLang", "settingsVersion", "translate", "translatePartials",
+                # 外观相关：这几个直接决定「是先显示原文，还是直接显示译文」
+                "showSource", "showTarget", "maxLines", "bgOpacity",
             ]
             for k in keys:
                 v = s.get(k, "<未设置>")

@@ -517,10 +517,14 @@ async function main() {
       // --- 原文和译文一样时只显示一行（语气词场景）------------------------------
       // 服务端判定「啊」「哈哈」「uh」这类语气词不值得翻译，直接把原文当译文发过来。
       // 前端必须把重复的那行合并掉，否则会显示两遍「啊」。
+      //
+      // 注意：这里要**显式打开「显示原文」**，因为默认值是 false（只显示译文）。
+      // 不打开的话「原文==译文才合并」这条逻辑根本测不到 —— 原文本来就不显示。
       const sameTest = await swEval(cdp, `
         const tabs = await chrome.tabs.query({});
         const tab = tabs.find(t => t.url && t.url.startsWith(${JSON.stringify(PLAIN_URL)}));
         const send = (line) => chrome.tabs.sendMessage(tab.id, { to: "content", type: "line", line });
+        const set = (s) => chrome.tabs.sendMessage(tab.id, { to: "content", type: "settings", settings: s });
         const read = async () => {
           const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => {
             const h = document.getElementById("vst-subtitle-host");
@@ -535,11 +539,15 @@ async function main() {
           }});
           return r[0].result;
         };
-        // 语气词：原文 == 译文
+
+        await set({ showSource: true, showTarget: true });   // 双语模式，才能测到「重复才合并」
+        await new Promise(r => setTimeout(r, 300));
+
+        // 语气词：原文 == 译文 → 应合并成一行
         await send({ id: 400, final: true, source: "啊", translated: "啊" });
         await new Promise(r => setTimeout(r, 300));
         const filler = await read();
-        // 正常句子：两行都该显示
+        // 正常句子：两行都该显示（别误伤双语字幕）
         await send({ id: 401, final: true, source: "Hello there.", translated: "你好。" });
         await new Promise(r => setTimeout(r, 300));
         const normal = await read();
@@ -556,6 +564,61 @@ async function main() {
         ok("正常句子仍然显示原文+译文两行（没误伤双语字幕）");
       } else {
         bad(`正常句子被误合并了：${JSON.stringify(sm.normal)}`);
+      }
+
+      // --- 只显示译文时，原文不该先冒出来 --------------------------------------
+      // 服务端是分两条消息发的：先发只有原文的，再发带译文的。
+      // 如果「显示原文」关着，第一条必须整行隐藏 —— 否则用户会看到
+      // 「先闪一下原文，译文才补上」，感觉像先显示原文再显示译文。
+      const monoTest = await swEval(cdp, `
+        const tabs = await chrome.tabs.query({});
+        const tab = tabs.find(t => t.url && t.url.startsWith(${JSON.stringify(PLAIN_URL)}));
+        const send = (line) => chrome.tabs.sendMessage(tab.id, { to: "content", type: "line", line });
+        const set = (s) => chrome.tabs.sendMessage(tab.id, { to: "content", type: "settings", settings: s });
+        const read = async () => {
+          const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => {
+            const h = document.getElementById("vst-subtitle-host");
+            if (!h) return null;
+            const lines = [...h.shadowRoot.querySelectorAll(".vst-line")]
+              .filter(el => !el.classList.contains("vst-placeholder"));
+            const last = lines[lines.length - 1];
+            if (!last) return null;
+            const s = last.querySelector(".vst-src");
+            const d = last.querySelector(".vst-dst");
+            const vis = (el) => !!(el && getComputedStyle(el).display !== "none" &&
+              el.textContent.trim() !== "" && getComputedStyle(last).display !== "none");
+            return { lineShown: getComputedStyle(last).display !== "none", srcShown: vis(s), dstShown: vis(d) };
+          }});
+          return r[0].result;
+        };
+
+        await set({ showSource: false, showTarget: true });
+        await new Promise(r => setTimeout(r, 350));
+
+        // 第一条：只有原文（译文还没翻出来）
+        await send({ id: 500, final: true, source: "Only the original text here.", translated: null });
+        await new Promise(r => setTimeout(r, 350));
+        const during = await read();
+
+        // 第二条：译文到了
+        await send({ id: 500, final: true, source: null, translated: "只有译文。" });
+        await new Promise(r => setTimeout(r, 350));
+        const after = await read();
+
+        await set({ showSource: true, showTarget: true });   // 还原，别影响后面的检查
+        return JSON.stringify({ during, after });
+      `);
+      const mo = JSON.parse(monoTest);
+      info(`只显示译文时：原文到达后 整行显示=${mo.during && mo.during.lineShown} 原文=${mo.during && mo.during.srcShown}；译文到达后 译文=${mo.after && mo.after.dstShown}`);
+      if (mo.during && !mo.during.srcShown && !mo.during.lineShown) {
+        ok("关掉「显示原文」后，原文不会先冒出来（直接等译文）");
+      } else {
+        bad(`原文提前冒出来了：${monoTest}`);
+      }
+      if (mo.after && mo.after.dstShown && !mo.after.srcShown) {
+        ok("译文到达后直接显示译文（没有多余的原文行）");
+      } else {
+        bad(`译文显示不对：${JSON.stringify(mo.after)}`);
       }
 
       // --- 有人开始说新一句 → 旧字幕要立刻撤掉 -------------------------------

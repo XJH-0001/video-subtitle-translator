@@ -31,7 +31,10 @@
     openaiThinking: false,           // 翻译不需要「思考模式」，开着会慢 2~3 倍且更贵
 
     // ---- 字幕外观 ----
-    showSource: true,            // 是否显示原文
+    // 默认只显示译文 —— 这是「翻译插件」，用户要的是中文。
+    // 开着的话原文会先冒出来、译文晚半秒才补上，看着就像「先显示原文再显示译文」。
+    // 想看双语字幕（原文+译文）就把它打开。
+    showSource: false,
     showTarget: true,            // 是否显示译文
     fontSize: 22,                // 译文基准字号 px
     fontFamily: "",              // "" = 用系统默认
@@ -62,7 +65,8 @@
   //   1 → 2：翻译默认改成 DeepSeek，模型名 deepseek-chat → deepseek-flash，识别模型改成 auto
   //   2 → 3：字幕底色默认从半透明黑改成全透明（像原生字幕）
   //   3 → 4：同时显示条数默认从 2 改成 1（只显示当前这一条，画面更干净）
-  const SETTINGS_VERSION = 4;
+  //   4 → 5：默认只显示译文（以前默认双语，原文会先冒出来、译文晚半秒才补上）
+  const SETTINGS_VERSION = 5;
 
   const TARGETS = [
     { value: "zh", label: "中文（简体）" },
@@ -136,6 +140,14 @@
         //     2 是老默认值，没主动调过就跟着升；调成 3/4 的保持不动。
         if (stored.maxLines === undefined || stored.maxLines === 2) {
           merged.maxLines = DEFAULTS.maxLines;
+        }
+        // v5: 默认只显示译文。
+        //     老默认是双语（showSource=true），于是原文会先冒出来、译文晚半秒才补上，
+        //     看着就像「先显示原文再显示译文」。用户要的是中文，所以默认改成只显示译文。
+        //     注意：这里没法区分「用户主动开的双语」和「只是老默认值」——
+        //     老版本默认就是 true，绝大多数人没动过。真想要双语的重新勾一下即可。
+        if (stored.showSource === undefined || stored.showSource === true) {
+          merged.showSource = DEFAULTS.showSource;
         }
         merged.settingsVersion = SETTINGS_VERSION;
         // ★ 直接写存储，**不能**调 saveSettings()：

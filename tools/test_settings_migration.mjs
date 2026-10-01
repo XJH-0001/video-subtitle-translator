@@ -27,6 +27,7 @@ const STORED = {
   model: "small",
   bgOpacity: 0.6,
   maxLines: 2,
+  showSource: true,
   targetLang: "zh",
   translate: true,
   translatePartials: true,
@@ -85,7 +86,7 @@ const { VST, written } = runLoadSettings(STORED);
 const merged = await VST.loadSettings();
 
 console.log("  迁移后 loadSettings() 返回：");
-for (const k of ["translator", "openaiModel", "model", "bgOpacity", "maxLines", "settingsVersion"]) {
+for (const k of ["translator", "openaiModel", "model", "bgOpacity", "maxLines", "showSource", "settingsVersion"]) {
   console.log(`     ${k} = ${JSON.stringify(merged[k])}`);
 }
 console.log("");
@@ -95,6 +96,7 @@ check("翻译模型切到 deepseek-flash", merged.openaiModel === "deepseek-flas
 check("识别模型切到 auto", merged.model === "auto", merged.model);
 check("字幕底色改成全透明（0）", merged.bgOpacity === 0, String(merged.bgOpacity));
 check("同屏条数改成 1", merged.maxLines === 1, String(merged.maxLines));
+check("默认只显示译文（不再先冒原文）", merged.showSource === false, String(merged.showSource));
 // 版本号写成 >= 2 而不是写死具体数字 —— 以后再加迁移就不用改测试了
 check("打上版本号（只迁移一次）", Number(merged.settingsVersion) >= 2, String(merged.settingsVersion));
 check("迁移结果被写回存储", written.length > 0, `${written.length} 次写入`);
