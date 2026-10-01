@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 from asr import SAMPLE_RATE, StreamSession, WhisperEngine
 from config import MODEL_CHOICES, TARGET_LANGUAGES, TRANSLATOR_CHOICES, Settings, load_settings
-from translate import Translator
+from translate import Translator, is_filler
 
 VERSION = "1.0.0"
 
@@ -334,6 +334,19 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if source:
             await send(ev)
         if not session_cfg["translate"] or not source:
+            return
+
+        # ---- 语气词 / 笑声：原样显示，不翻译 ----
+        # 「啊」「呀」「嗯」「哈哈」这类词在视频里出现得又密又快，还会被反复识别到。
+        # 每条都发翻译请求有两个坏处：白花钱，而且占住请求锁把真正要翻的句子挤到后面。
+        # 而这些词翻出来和原文基本一样，翻不翻没区别。
+        # 直接把原文当译文发出去 —— 前端发现两边一样会合并成一行，显示效果就是「只显示这个词」。
+        # 注意：不论中间还是最终都发，否则用户关掉「显示原文」时这类词会整个看不见。
+        if is_filler(source):
+            if ev["final"]:
+                last_partial_source.pop(ev["id"], None)
+                # 语气词不进翻译上下文 —— 别让它污染代词/指代的判断
+            await _emit_translation(ev, source)
             return
 
         if not ev["final"]:

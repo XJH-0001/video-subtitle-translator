@@ -88,6 +88,68 @@ function shorten(t, n) {
   return t.length > n ? t.slice(0, n) + "…" : t;
 }
 
+// 弹窗里优先露出的几档模型。其余的在下面的下拉框里。
+// 为什么是这几个：auto 是默认（按设备选），base 是最快，large-v3-turbo 是准度/速度最平衡的。
+const QUICK_MODELS = [
+  { value: "auto", label: "自动", sub: "推荐" },
+  { value: "base", label: "最快", sub: "base" },
+  { value: "small", label: "均衡", sub: "small" },
+  { value: "large-v3-turbo", label: "高准确", sub: "turbo" },
+];
+
+function renderModelPicker() {
+  // 下拉框从 VST.MODELS 动态填 —— 以前写死在 HTML 里，
+  // 默认值改成 auto 之后就选不中了（value 找不到对应 option 会静默变成第一项），
+  // 显示的和实际跑的完全对不上。
+  const sel = $("model");
+  if (sel && !sel.options.length) {
+    (VST.MODELS || []).forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.value;
+      o.textContent = m.label;
+      sel.appendChild(o);
+    });
+  }
+
+  const cur = settings.model || "auto";
+  if (sel) sel.value = cur;   // 不在快捷档位里也能正确显示
+
+  const box = $("modelChips");
+  if (!box) return;
+  box.innerHTML = "";
+  QUICK_MODELS.forEach((m) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("data-model", m.value);
+    b.setAttribute("data-on", cur === m.value ? "1" : "0");
+    b.innerHTML = "";
+    b.appendChild(document.createTextNode(m.label));
+    const s = document.createElement("small");
+    s.textContent = m.sub;
+    b.appendChild(s);
+    b.addEventListener("click", () => switchModel(m.value));
+    box.appendChild(b);
+  });
+}
+
+async function switchModel(model) {
+  if (model === settings.model) return;
+  const hint = $("modelHint");
+  if (hint) {
+    hint.setAttribute("data-tone", "busy");
+    hint.textContent = `正在切到 ${model}…服务端要重载识别引擎，约 2~6 秒。`;
+  }
+  await pushSettings({ model });
+  setStatusText(`已切换到 ${model}，正在重载识别引擎…`);
+  // 状态栏会随后端就绪自动刷新，这里给个兜底
+  setTimeout(() => {
+    if (hint && hint.getAttribute("data-tone") === "busy") {
+      hint.removeAttribute("data-tone");
+      hint.textContent = "切换后服务端会自动重载识别引擎，约 2~6 秒。";
+    }
+  }, 8000);
+}
+
 function renderSettings() {
   $("serverUrl").textContent = settings.serverUrl;
   $("showSource").checked = !!settings.showSource;
@@ -95,7 +157,7 @@ function renderSettings() {
   $("fontSizeVal").textContent = settings.fontSize;
   $("targetLang").value = settings.targetLang;
   $("attachMode").value = settings.attachMode || "auto";
-  $("model").value = settings.model;
+  renderModelPicker();
   $("editPos").setAttribute("data-on", runtime.editMode ? "1" : "0");
   $("editPos").textContent = runtime.editMode ? "完成调整" : "调整位置";
 }
@@ -216,11 +278,7 @@ $("targetLang").addEventListener("change", (e) => pushSettings({ targetLang: e.t
 
 $("attachMode").addEventListener("change", (e) => pushSettings({ attachMode: e.target.value }));
 
-$("model").addEventListener("change", async (e) => {
-  const model = e.target.value;
-  await pushSettings({ model });
-  setStatusText(`已切换到 ${model}，正在重新加载识别引擎…`);
-});
+$("model").addEventListener("change", (e) => switchModel(e.target.value));
 
 $("editPos").addEventListener("click", async () => {
   const want = !runtime.editMode;

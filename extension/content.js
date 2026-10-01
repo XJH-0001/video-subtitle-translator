@@ -781,7 +781,13 @@
     setTextSmooth(rec, "src", d.source || "", !!d.final);
     setTextSmooth(rec, "dst", d.translated || "", !!d.final);
 
-    const showSrc = settings.showSource && !!d.source;
+    // 原文和译文一模一样时只显示一行。
+    // 什么时候会一样：语气词 / 笑声（「啊」「哈哈」「uh」）—— 服务端判定这类词不值得翻译，
+    // 直接把原文当译文发过来。显示两遍「啊」很蠢，这里合并掉。
+    // 顺便也覆盖了「译文就是原文」的正常情况（人名、术语等）。
+    const sameText = !!(d.source && d.translated &&
+      d.source.trim().toLowerCase() === d.translated.trim().toLowerCase());
+    const showSrc = settings.showSource && !!d.source && !sameText;
     const showDst = settings.showTarget && !!d.translated;
     rec.src.style.display = showSrc ? "" : "none";
     rec.dst.style.display = showDst ? "" : "none";

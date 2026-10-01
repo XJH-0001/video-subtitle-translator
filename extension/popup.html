@@ -54,6 +54,23 @@
       .device[data-kind="gpu"] { background: rgba(46,160,67,.16); color: #2ea043; font-weight: 600; }
       .device[data-kind="cpu"] { background: rgba(210,153,34,.14); color: #b8860b; }
 
+      /* 识别模型的快捷按钮：一眼看到当前用的是哪个，点一下就切 */
+      .models { display: flex; flex-wrap: wrap; gap: 6px; }
+      .models button {
+        flex: 1 1 auto; min-width: 72px; padding: 7px 10px; font-size: 12px;
+        border-radius: 8px; border: 1px solid var(--line); background: transparent;
+        color: var(--fg); cursor: pointer; transition: background .12s, border-color .12s;
+        line-height: 1.25;
+      }
+      .models button:hover { background: rgba(127,127,127,.12); }
+      .models button[data-on="1"] {
+        background: rgba(59,130,246,.18); border-color: rgba(59,130,246,.55);
+        color: #3b82f6; font-weight: 600;
+      }
+      .models button small { display: block; font-size: 10px; opacity: .7; font-weight: 400; }
+      .modelhint { margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+      .modelhint[data-tone="busy"] { color: #b8860b; }
+
       button.main {
         width: 100%;
         padding: 10px;
@@ -145,7 +162,7 @@
         <input type="range" id="fontSize" min="14" max="44" step="1" />
         <b id="fontSizeVal" style="width: 26px; text-align: right">22</b>
       </label>
-      <label class="field">
+      <label class="field" style="margin-top: 7px">
         <span>翻译成</span>
         <select id="targetLang"></select>
       </label>
@@ -156,14 +173,19 @@
           <option value="window">窗口底部</option>
         </select>
       </label>
-      <label class="field" style="margin-top: 7px">
-        <span>字幕速度</span>
-        <select id="model">
-          <option value="base">更快（base，延迟最低）</option>
-          <option value="small">均衡（small，推荐）</option>
-          <option value="medium">更准（medium，较慢）</option>
-        </select>
+    </div>
+
+    <div class="card">
+      <div class="label">识别模型</div>
+      <!-- 常用档位做成按钮，一点就切，不用拉开下拉框翻。
+           完整列表在下面那个 select 里（选项由 popup.js 从 VST.MODELS 动态填，
+           不再写死 —— 之前写死后默认值改成 auto 就选不中了，显示的和实际跑的对不上）。 -->
+      <div class="models" id="modelChips"></div>
+      <label class="field" style="margin-top: 9px">
+        <span>全部</span>
+        <select id="model"></select>
       </label>
+      <div class="modelhint" id="modelHint">切换后服务端会自动重载识别引擎，约 2~6 秒。</div>
     </div>
 
     <div class="foot">

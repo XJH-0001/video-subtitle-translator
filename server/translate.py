@@ -363,6 +363,59 @@ CONTEXT_HEADER = (
 CONTEXT_ACK = "明白，我会结合上文把代词和指代翻准，只翻译最后一句。"
 
 
+# ---------------------------------------------------------------------------
+# 语气词 / 填充词：不值得翻译，原样显示就行
+# ---------------------------------------------------------------------------
+# 为什么单独判这个：
+#   视频里「啊」「呀」「嗯」「哈哈」这类语气词非常频繁，而且会被反复识别到。
+#   每条都发去翻译有两个坏处：一是白花钱，二是占住请求锁，
+#   把真正需要翻译的句子挤到后面。而这些词翻出来和原文基本一样，翻不翻没区别。
+#
+# 判定故意保守：**只有整句话全部由语气词组成**才算（而不是「包含」）。
+# 像「啊，原来是这样」这种有实义的句子不会被误判。
+_FILLER_CHARS = set(
+    "啊呀哦嗯呃唉哎喔噢呜嘿哈嘻咦嘛吧呢呐哟欸诶嗨呼嘶啧呵哼哪啦哇呗咯喽嘞嗷啾"
+)
+_EN_FILLERS = {
+    "uh", "um", "umm", "uhh", "oh", "ooh", "ah", "ahh", "hmm", "hm", "mm", "mhm",
+    "er", "erm", "eh", "hey", "hi", "wow", "huh", "ha", "haha", "hah", "hehe",
+    "yep", "nope", "yo", "oops", "shh", "tsk", "phew", "ugh", "meh", "duh",
+    "hooray", "yay", "gah",
+}
+# 语气词重复几次也还是语气词，但不能无限长
+_FILLER_MAX_LEN = 12
+# 判定前先扒掉的标点和空白
+_FILLER_STRIP = "。，、！？…~～!?.,;:· 　\t\"'“”‘’()（）[]【】—－-"
+
+
+def is_filler(text: str) -> bool:
+    """整句话是不是单纯语气词 / 笑声 —— 是的话没有翻译的必要，原样显示即可。
+
+    >>> is_filler("啊")
+    True
+    >>> is_filler("哈哈哈")
+    True
+    >>> is_filler("啊，原来是这样")   # 有实义，不算语气词
+    False
+    """
+    if not text:
+        return False
+    core = text.strip().strip(_FILLER_STRIP).strip()
+    if not core or len(core) > _FILLER_MAX_LEN:
+        return False
+
+    # 英文：拆词后全部落在填充词表里
+    if core.isascii():
+        words = [w for w in re.split(r"[^A-Za-z']+", core.lower()) if w]
+        return bool(words) and all(w in _EN_FILLERS for w in words)
+
+    # 中文：每个字符都得是语气词
+    chars = [c for c in core if c not in _FILLER_STRIP]
+    if not chars:
+        return False
+    return all(c in _FILLER_CHARS for c in chars)
+
+
 class OpenAICompatProvider:
     """任何 OpenAI 兼容的 /chat/completions 接口：DeepSeek、通义、硅基流动、Ollama...
 

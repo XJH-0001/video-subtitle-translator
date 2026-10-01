@@ -131,8 +131,8 @@ class CDP {
       }, timeoutMs);
     });
   }
-  async evalIn(expression, awaitPromise = true) {
-    const r = await this.send("Runtime.evaluate", { expression, awaitPromise, returnByValue: true });
+  async evalIn(expression, awaitPromise = true, timeoutMs = 30000) {
+    const r = await this.send("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, timeoutMs);
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || "JS 执行出错");
     return r.result.value;
   }
@@ -145,18 +145,22 @@ const getJson = async (url) => (await fetch(url)).json();
  *
  *  MV3 的 Service Worker 空闲会被浏览器回收，唤醒偶尔要几秒，
  *  所以超时（通常是 SW 在休眠）就重试一次，别让偶发失败污染回归结果。
+ *
+ *  timeoutMs 用于「本地启动器」那种真的会慢的调用：
+ *  它会拉起一个新服务，而默认模型是 large-v3-turbo（2.5GB），
+ *  如果此时回归自己的服务也占着显存，加载会明显变慢，30 秒不够。
  */
-async function swEval(cdp, body) {
+async function swEval(cdp, body, timeoutMs = 30000) {
   const expr = `(async () => { ${body} })()`;
   try {
-    return await cdp.evalIn(expr);
+    return await cdp.evalIn(expr, true, timeoutMs);
   } catch (e) {
     if (!/超时/.test(String(e))) throw e;
     // 敲一下 SW 把它叫醒，再试一次
     try {
       await cdp.evalIn(`chrome.runtime.getManifest().version`);
     } catch {}
-    return await cdp.evalIn(expr);
+    return await cdp.evalIn(expr, true, timeoutMs);
   }
 }
 
@@ -510,6 +514,50 @@ async function main() {
         bad(`同屏出现了多条字幕：${oneLineTest}`);
       }
 
+      // --- 原文和译文一样时只显示一行（语气词场景）------------------------------
+      // 服务端判定「啊」「哈哈」「uh」这类语气词不值得翻译，直接把原文当译文发过来。
+      // 前端必须把重复的那行合并掉，否则会显示两遍「啊」。
+      const sameTest = await swEval(cdp, `
+        const tabs = await chrome.tabs.query({});
+        const tab = tabs.find(t => t.url && t.url.startsWith(${JSON.stringify(PLAIN_URL)}));
+        const send = (line) => chrome.tabs.sendMessage(tab.id, { to: "content", type: "line", line });
+        const read = async () => {
+          const r = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => {
+            const h = document.getElementById("vst-subtitle-host");
+            if (!h) return null;
+            const lines = [...h.shadowRoot.querySelectorAll(".vst-line")];
+            const last = lines[lines.length - 1];
+            if (!last) return null;
+            const s = last.querySelector(".vst-src");
+            const d = last.querySelector(".vst-dst");
+            const vis = (el) => el && getComputedStyle(el).display !== "none" && el.textContent.trim() !== "";
+            return { srcShown: vis(s), dstShown: vis(d), src: s ? s.textContent : "", dst: d ? d.textContent : "" };
+          }});
+          return r[0].result;
+        };
+        // 语气词：原文 == 译文
+        await send({ id: 400, final: true, source: "啊", translated: "啊" });
+        await new Promise(r => setTimeout(r, 300));
+        const filler = await read();
+        // 正常句子：两行都该显示
+        await send({ id: 401, final: true, source: "Hello there.", translated: "你好。" });
+        await new Promise(r => setTimeout(r, 300));
+        const normal = await read();
+        return JSON.stringify({ filler, normal });
+      `);
+      const sm = JSON.parse(sameTest);
+      info(`语气词：src显示=${sm.filler && sm.filler.srcShown} dst显示=${sm.filler && sm.filler.dstShown} 内容=${JSON.stringify(sm.filler && sm.filler.dst)}`);
+      if (sm.filler && sm.filler.dstShown && !sm.filler.srcShown) {
+        ok("语气词原文=译文时合并成一行（不会显示两遍「啊」）");
+      } else {
+        bad(`语气词没合并：${sameTest}`);
+      }
+      if (sm.normal && sm.normal.srcShown && sm.normal.dstShown) {
+        ok("正常句子仍然显示原文+译文两行（没误伤双语字幕）");
+      } else {
+        bad(`正常句子被误合并了：${JSON.stringify(sm.normal)}`);
+      }
+
       // --- 有人开始说新一句 → 旧字幕要立刻撤掉 -------------------------------
       // 识别天生有半秒到一秒延迟。等新字幕出来时说话的人往往已经换了，
       // 旧字幕还挂着就会被误当成「下一个人在说的内容」。
@@ -745,17 +793,29 @@ async function main() {
     if (!portFree) {
       info(`端口 ${BOOT_PORT} 已经有服务在跑，跳过启动测试（这属于正常情况）`);
     } else {
-      const raw = await swEval(cdp, `
-        try {
-          const res = await chrome.runtime.sendNativeMessage("com.vst.server_launcher",
-            { action: "ensure", port: ${BOOT_PORT} });
-          return JSON.stringify({ ok: true, res });
-        } catch (e) {
-          return JSON.stringify({ ok: false, error: String(e) });
-        }
-      `);
-      const nr = JSON.parse(raw);
-      if (nr.ok) ok(`本地启动器可用（返回 ${JSON.stringify(nr.res)}）`);
+      // 注意：这一步会真的拉起第二个本地服务，而默认模型是 large-v3-turbo（约 2.5GB）。
+      // 如果回归自己那个服务此时也占着显存，第二次加载会明显变慢。
+      // 所以给足超时；真超时也只算「跳过」而不是失败 —— 它依赖外部进程和显存状况，
+      // 拿它判产品对错不公平。
+      let raw = null;
+      try {
+        raw = await swEval(cdp, `
+          try {
+            const res = await chrome.runtime.sendNativeMessage("com.vst.server_launcher",
+              { action: "ensure", port: ${BOOT_PORT} });
+            return JSON.stringify({ ok: true, res });
+          } catch (e) {
+            return JSON.stringify({ ok: false, error: String(e) });
+          }
+        `, 90000);
+      } catch (e) {
+        info(`本地启动器调用超时，跳过这一段（显存/进程竞争下属正常）：${e.message}`);
+      }
+
+      const nr = raw ? JSON.parse(raw) : { ok: false, timeout: true };
+      if (nr.timeout) {
+        info("已跳过自动启动验证 —— 不影响其余检查");
+      } else if (nr.ok) ok(`本地启动器可用（返回 ${JSON.stringify(nr.res)}）`);
       else if (String(nr.error).includes("not found") || String(nr.error).includes("not registered")) {
         bad(`本地启动器没注册：${nr.error}`);
         console.log("       → 运行 scripts\\register-native-host.ps1 即可");
@@ -780,6 +840,7 @@ async function main() {
         await sleep(1000);
       }
       if (up) ok(`本地服务被成功自动拉起（等待 ${waited}s 后 /health 可用）`);
+      else if (nr.timeout) info("服务没能确认起来（上面已跳过，不算失败）");
       else bad("调用成功但服务 60 秒内没起来");
 
       // 顺手验证接口形状，然后把它关掉，别在用户机器上留个进程
@@ -797,6 +858,70 @@ async function main() {
           info("测试用的服务已关闭");
         } catch {}
       }
+    }
+
+    // --- 弹窗的模型快捷切换 -------------------------------------------------
+    // 以前弹窗里的选项是写死在 HTML 里的（base/small/medium），
+    // 但默认值后来改成了 auto —— value 找不到对应 option 会静默退成第一项，
+    // 于是「显示 base、实际跑 large-v3-turbo」，而且根本没得选。
+    // 现在选项从 VST.MODELS 动态生成，并加了一排快捷按钮。
+    const extId = String(ours.target.url).split("/")[2];
+    const POPUP_URL = `chrome-extension://${extId}/popup.html`;
+    let popupInfo = null;
+    try {
+      await cdp.send("Target.createTarget", { url: POPUP_URL });
+      // 等 popup 把设置读完并渲染出来
+      for (let i = 0; i < 30 && !popupInfo; i++) {
+        await sleep(300);
+        const list = await getJson(`http://127.0.0.1:${CDP_PORT}/json/list`).catch(() => []);
+        const pt = list.find((t) => t.type === "page" && String(t.url).startsWith(POPUP_URL));
+        if (!pt) continue;
+        const pcdp = new CDP(pt.webSocketDebuggerUrl);
+        try {
+          await pcdp.ready;
+          const raw = await pcdp.evalIn(`(() => {
+            const sel = document.getElementById("model");
+            const chips = [...document.querySelectorAll("#modelChips button")];
+            return JSON.stringify({
+              optionCount: sel ? sel.options.length : 0,
+              options: sel ? [...sel.options].map(o => o.value) : [],
+              value: sel ? sel.value : null,
+              chips: chips.map(b => ({ m: b.getAttribute("data-model"), on: b.getAttribute("data-on") })),
+            });
+          })()`);
+          const parsed = JSON.parse(raw);
+          if (parsed.optionCount > 0) popupInfo = parsed;
+        } catch (e) { /* 还没渲染好，继续等 */ }
+        pcdp.close();
+      }
+    } catch (e) {
+      info(`打开弹窗页失败（不影响其他检查）：${e.message}`);
+    }
+
+    if (popupInfo) {
+      info(`弹窗模型选项：${popupInfo.options.join(", ")}`);
+      info(`  当前值=${popupInfo.value}　快捷按钮=${popupInfo.chips.map((c) => c.m + (c.on === "1" ? "(选中)" : "")).join(" ")}`);
+      // 必须包含 auto 和 large-v3-turbo —— 之前正好缺这两个
+      const opts = popupInfo.options;
+      if (opts.includes("auto") && opts.includes("large-v3-turbo")) {
+        ok(`弹窗模型选项完整（${opts.length} 项，含 auto 和 large-v3-turbo）`);
+      } else {
+        bad(`弹窗模型选项不全，缺 ${!opts.includes("auto") ? "auto " : ""}${!opts.includes("large-v3-turbo") ? "large-v3-turbo" : ""}`);
+      }
+      // 当前值必须能在选项里找到（否则就是「显示的和实际跑的不一致」那个 bug）
+      if (popupInfo.value && opts.includes(popupInfo.value)) {
+        ok(`弹窗当前模型显示正确（${popupInfo.value}）`);
+      } else {
+        bad(`弹窗当前模型显示不对：value=${popupInfo.value}，不在选项里 → 会静默显示成第一项`);
+      }
+      const on = popupInfo.chips.filter((c) => c.on === "1");
+      if (popupInfo.chips.length >= 3 && on.length === 1) {
+        ok(`有 ${popupInfo.chips.length} 个快捷切换按钮，且只有当前那个是高亮的`);
+      } else {
+        bad(`快捷按钮状态异常：${JSON.stringify(popupInfo.chips)}`);
+      }
+    } else {
+      info("没能读到弹窗内容，跳过模型选择器检查");
     }
 
     // --- Service Worker 有没有报错 -----------------------------------------

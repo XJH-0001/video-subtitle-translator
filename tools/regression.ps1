@@ -46,7 +46,7 @@ Write-Host "  全量回归测试" -ForegroundColor Cyan
 Write-Host ("=" * 62) -ForegroundColor Cyan
 
 # --- 1. 扩展 JS 语法 ---------------------------------------------------------
-Step "1/6  扩展 JS 语法检查"
+Step "1/7  扩展 JS 语法检查"
 $bad = 0
 Get-ChildItem (Join-Path $Root "extension") -Filter *.js | ForEach-Object {
     $null = & node --check $_.FullName 2>&1
@@ -73,21 +73,30 @@ try {
 Verdict "扩展静态检查" $bad
 
 # --- 2. 文本过滤单元测试 ------------------------------------------------------
-Step "2/6  文本过滤单元测试（幻觉 / 重复折叠）"
+Step "2/7  文本过滤单元测试（幻觉 / 重复折叠）"
 Push-Location $Server
 & $VPy "tests\test_text_filters.py"
 Verdict "文本过滤单元测试" $LASTEXITCODE
 Pop-Location
 
-# --- 3. 环境自检 -------------------------------------------------------------
-Step "3/6  环境自检（依赖 / 模型 / 识别 / 翻译）"
+# --- 3. 语气词判定 -----------------------------------------------------------
+# 「啊」「哈哈」「uh」这类不值得翻译，服务端直接原样当译文发。
+# 判定必须保守：只有整句全由语气词组成才算，有实义的句子绝不能误吞。
+Step "3/7  语气词判定（不该翻的不翻，该翻的别误吞）"
+Push-Location $Server
+& $VPy "tests\test_filler.py"
+Verdict "语气词判定" $LASTEXITCODE
+Pop-Location
+
+# --- 4. 环境自检 -------------------------------------------------------------
+Step "4/7  环境自检（依赖 / 模型 / 识别 / 翻译）"
 Push-Location $Server
 & $VPy "selftest.py" --model $Model
 Verdict "环境自检" $LASTEXITCODE
 Pop-Location
 
 # --- 4. 端到端联调 -----------------------------------------------------------
-Step "4/6  端到端联调（WebSocket + 流式识别 + 翻译）"
+Step "5/7  端到端联调（WebSocket + 流式识别 + 翻译）"
 Push-Location $Server
 if ($Realtime) { & $VPy "tests\e2e_test.py" --model $Model --realtime }
 else           { & $VPy "tests\e2e_test.py" --model $Model }
@@ -96,9 +105,9 @@ Pop-Location
 
 # --- 5. 真实浏览器加载扩展 -----------------------------------------------------
 if ($SkipBrowser) {
-    Step "5/6  真实浏览器验证（已跳过）"
+    Step "6/7  真实浏览器验证（已跳过）"
 } else {
-    Step "5/6  真实浏览器加载扩展（无头 Edge + CDP）"
+    Step "6/7  真实浏览器加载扩展（无头 Edge + CDP）"
     # 8765 上可能已经有一个服务在跑（比如用户自己开着的），能复用就复用：
     # 否则会撞端口，而且不该为了跑测试把用户的服务干掉。
     $existing = $false
@@ -142,7 +151,7 @@ if ($SkipBrowser) {
 # 老版本把 translator 存成 "auto"（免费接口竞速），而扩展发过来的值会**覆盖**服务端配置。
 # 如果不做迁移，用户重载扩展后依然走免费接口 —— 服务端明明配了 DeepSeek 也没用。
 # 这个测试用真实存储值跑一遍 loadSettings()，确认会纠正成 openai / deepseek-flash。
-Step "6/6  扩展设置迁移（老配置 → DeepSeek）"
+Step "7/7  扩展设置迁移（老配置 → DeepSeek）"
 Push-Location $Root
 & node "tools\test_settings_migration.mjs"
 Verdict "扩展设置迁移" $LASTEXITCODE
