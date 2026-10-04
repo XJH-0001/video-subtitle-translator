@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 from asr import SAMPLE_RATE, StreamSession, WhisperEngine
 from config import MODEL_CHOICES, TARGET_LANGUAGES, TRANSLATOR_CHOICES, Settings, load_settings
-from translate import Translator, is_filler
+from translate import Translator, filler_display, is_filler
 
 VERSION = "1.0.0"
 
@@ -342,11 +342,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
         # 而这些词翻出来和原文基本一样，翻不翻没区别。
         # 直接把原文当译文发出去 —— 前端发现两边一样会合并成一行，显示效果就是「只显示这个词」。
         # 注意：不论中间还是最终都发，否则用户关掉「显示原文」时这类词会整个看不见。
+        #
+        # ★ 显示时必须压短：Whisper 会吐「啊，啊，啊，啊……」这种长串，
+        #   原样显示会折行铺满整个画面（实测踩到的 bug）。filler_display 压成「啊啊」。
         if is_filler(source):
             if ev["final"]:
                 last_partial_source.pop(ev["id"], None)
                 # 语气词不进翻译上下文 —— 别让它污染代词/指代的判断
-            await _emit_translation(ev, source)
+            await _emit_translation(ev, filler_display(source))
             return
 
         if not ev["final"]:

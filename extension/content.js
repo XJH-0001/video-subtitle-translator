@@ -137,6 +137,11 @@
       -webkit-backdrop-filter: blur(6px);
       text-align: center;
       max-width: 92vw;
+      /* 硬性上限：字幕区永远不超过视口高度的 40%。
+         正常情况下碰不到，但万一识别吐出一大段（比如长串语气词），
+         没有这个上限它会折行铺满整个画面 —— 那比字幕难看多了。 */
+      max-height: 40vh;
+      overflow: hidden;
     }
     /* 底色全透明时：去掉毛玻璃和大内边距，纯靠文字描边保证可读
        —— 这就是原生字幕/播放器的做法，画面完全不被遮挡。 */
@@ -261,6 +266,17 @@
   // -------------------------------------------------------------------------
   function ensureHost() {
     if (host && host.isConnected) return;
+
+    // 清掉页面里可能残留的同名浮层。
+    // 扩展重载后，旧内容脚本的 DOM 是留着的，但已经没有脚本驱动它了；
+    // 新脚本再建一个，两个浮层就叠着显示 —— 看起来就像「满屏都是字幕」。
+    try {
+      document.querySelectorAll("#" + HOST_ID).forEach((el) => {
+        if (el !== host) el.remove();
+      });
+    } catch (e) {
+      /* 忽略 */
+    }
 
     if (!host) {
       host = document.createElement("div");

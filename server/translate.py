@@ -382,38 +382,128 @@ _EN_FILLERS = {
     "yep", "nope", "yo", "oops", "shh", "tsk", "phew", "ugh", "meh", "duh",
     "hooray", "yay", "gah",
 }
-# 语气词重复几次也还是语气词，但不能无限长
-_FILLER_MAX_LEN = 12
+# 语气词重复几次也还是语气词。
+# ★ 这里限制的是「**不同**字符的个数」，不是总长度。
+#   「啊，啊，啊，啊……」重复三十遍仍然是语气词；用总长度限制会把它漏掉，
+#   结果就是一长串「啊，啊，啊…」原样显示、折行铺满整个画面（实测踩到的 bug）。
+#   为什么会有这种输入：Whisper 在长静音/音乐上会陷进循环吐语气词，
+#   而重复之间夹着标点时，asr 里那两条「相邻重复」「周期重复」的折叠规则都匹配不上。
+_FILLER_MAX_UNIQUE = 4
 # 判定前先扒掉的标点和空白
 _FILLER_STRIP = "。，、！？…~～!?.,;:· 　\t\"'“”‘’()（）[]【】—－-"
+
+
+def _filler_core(text: str) -> str:
+    """去掉标点和空白，只留实义字符。"""
+    return "".join(c for c in (text or "") if c not in _FILLER_STRIP)
+
+
+def _strip_periodic(s: str) -> str:
+    """整段是某个短片的整数倍重复时，只留一份。
+
+    「hahaha」→「ha」、「yoyoyo」→「yo」。
+    英文笑声/感叹常写成这样，不折叠的话一个词都认不出来。
+    """
+    n = len(s)
+    for p in range(1, n // 2 + 1):
+        if n % p == 0 and s == s[:p] * (n // p):
+            return s[:p]
+    return s
+
+
+def _en_filler_word(w: str) -> bool:
+    """英文单词是不是填充词。
+
+    要处理三种写法，光查表覆盖不到：
+      · 原词就在表里                 hehe
+      · 尾部字母拖长                 ummmm → umm、uhhhh → uhh
+      · 整个词是某个填充词的重复      hahaha → ha×3、hehehe → hehe+he
+    """
+    if w in _EN_FILLERS:
+        return True
+    # 连续重复的字母压到 2 个，以及压到 1 个，两种都试：
+    # ummmm → umm（表里有）；ohhh → ohh（表里没有），但压成 oh 就对了
+    w2 = re.sub(r"([A-Za-z])\1+", r"\1\1", w)
+    w3 = re.sub(r"([A-Za-z])\1+", r"\1", w)
+    if w2 in _EN_FILLERS or w3 in _EN_FILLERS:
+        return True
+    # 词首就是某个填充词，剩下的还是它的重复（允许末尾残缺）
+    for f in _EN_FILLERS:
+        if len(f) < 2 or not w2.startswith(f):
+            continue
+        rest = w2[len(f):]
+        if not rest:
+            return True
+        if rest == (f * ((len(rest) // len(f)) + 1))[:len(rest)]:
+            return True
+    return False
 
 
 def is_filler(text: str) -> bool:
     """整句话是不是单纯语气词 / 笑声 —— 是的话没有翻译的必要，原样显示即可。
 
+    判定看的是「**不同字符**是否都属于语气词」，而不是总长度。
+    这样「啊，啊，啊，…」重复三十遍也能正确判为语气词。
+
     >>> is_filler("啊")
     True
     >>> is_filler("哈哈哈")
     True
-    >>> is_filler("啊，原来是这样")   # 有实义，不算语气词
+    >>> is_filler("啊，啊，啊")        # 重复 + 标点
+    True
+    >>> is_filler("啊，原来是这样")    # 有实义，不算语气词
     False
     """
-    if not text:
-        return False
-    core = text.strip().strip(_FILLER_STRIP).strip()
-    if not core or len(core) > _FILLER_MAX_LEN:
+    core = _filler_core(text)
+    if not core:
         return False
 
-    # 英文：拆词后全部落在填充词表里
-    if core.isascii():
-        words = [w for w in re.split(r"[^A-Za-z']+", core.lower()) if w]
-        return bool(words) and all(w in _EN_FILLERS for w in words)
+    raw = (text or "").strip()
 
-    # 中文：每个字符都得是语气词
-    chars = [c for c in core if c not in _FILLER_STRIP]
-    if not chars:
+    # 英文：按**原文本**拆词。
+    # 不能先去标点 —— 「Uh, um.」会被粘成 "Uhum"，一个词都不认识。
+    if raw.isascii():
+        words = [w for w in re.split(r"[^A-Za-z']+", raw.lower()) if w]
+        if not words:
+            return False
+        return all(_en_filler_word(w) for w in words)
+
+    # 中文：不同字符的种类有限，且全部是语气词。
+    # 这里要先去掉标点，否则「啊，啊，啊」会因为夹着逗号而判不出来。
+    uniq = set(core)
+    if len(uniq) > _FILLER_MAX_UNIQUE:
         return False
-    return all(c in _FILLER_CHARS for c in chars)
+    return uniq <= _FILLER_CHARS
+
+
+def filler_display(text: str) -> str:
+    """把一串语气词压成一个短形式。
+
+    「啊，啊，啊，啊……」×15 → 「啊啊」；「哈哈哈」→「哈哈」。
+    不压的话那串东西会折行铺满画面。
+    """
+    raw = (text or "").strip()
+    # 英文填充词本来就很短：压掉字母拖长和周期重复（hahaha→ha、ummmm→umm）
+    if raw.isascii():
+        parts = re.split(r"([^A-Za-z']+)", raw.lower())
+        out = "".join(
+            _strip_periodic(re.sub(r"([A-Za-z])\1+", r"\1\1", p)) if p.isalpha() else p
+            for p in parts
+        )
+        return out[:20]
+
+    core = _filler_core(raw)
+    if not core:
+        return raw
+    out: list[str] = []
+    for ch in core:
+        # 同一个字符最多留两遍（「哈哈哈」→「哈哈」）
+        if len(out) >= 2 and out[-1] == ch and out[-2] == ch:
+            continue
+        out.append(ch)
+        if len(out) >= 4:
+            break
+    return "".join(out)
 
 
 class OpenAICompatProvider:
